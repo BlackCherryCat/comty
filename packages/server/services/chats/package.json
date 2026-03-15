@@ -1,6 +1,0 @@
-{
-	"name": "chats",
-	"dependencies": {
-		"snowflake-uuid": "^1.0.0"
-	}
-}

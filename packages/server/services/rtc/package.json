@@ -1,6 +1,0 @@
-{
-	"name": "rtc",
-	"dependencies": {
-		"mediasoup": "^3.16.4"
-	}
-}

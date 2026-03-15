@@ -1,6 +1,0 @@
-{
-	"name": "marketplace",
-	"dependencies": {
-		"7zip-min": "^1.4.4"
-	}
-}

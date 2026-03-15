@@ -1,9 +1,0 @@
-[submodule "vessel"]
-	path = vessel
-	url = https://github.com/ragestudio/vessel
-[submodule "linebridge"]
-	path = linebridge
-	url = https://github.com/ragestudio/linebridge
-[submodule "comty.js"]
-	path = comty.js
-	url = https://github.com/ragestudio/comty.js
