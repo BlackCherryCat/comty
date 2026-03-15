@@ -104,7 +104,7 @@ const ScreenShareDialog = ({ close }) => {
 			</div>
 
 			<div className="screenshare-dialog__actions">
-				<Button onClick={close}>Nevermind</Button>
+				<Button onClick={close}>Fuh Naw💔🥀</Button>
 				<Button
 					type="primary"
 					onClick={startScreenShare}
