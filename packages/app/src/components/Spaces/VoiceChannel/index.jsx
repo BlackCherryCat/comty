@@ -2,10 +2,12 @@ import React from "react"
 import classnames from "classnames"
 import { motion } from "motion/react"
 import Button from "@ui/Button"
+import Slider from "@ui/Slider"
 
 import { Icons } from "@components/Icons"
 import UserPreview from "@components/UserPreview"
 import useMediaRTCState from "@hooks/useMediaRTCState"
+import { useStreamVolumePersistence } from "@hooks/useStreamVolumePersistence"
 
 import UsersModel from "@models/user"
 
@@ -14,173 +16,178 @@ import "./index.less"
 const StreamTile = ({
 	stream,
 	userData,
-	isFocused,
-	hasFocusedStream,
+	mode = "grid",
 	onTileClick,
 	onStreamAction,
-	onFullscreen,
 }) => {
 	const videoRef = React.useRef(null)
 	const [isLoading, setIsLoading] = React.useState(false)
 	const [hasError, setHasError] = React.useState(false)
+	const [mediaStream, setMediaStream] = React.useState(null)
+	const [volume, setLocalVolume] = React.useState(100)
 
 	const rtc = app.cores.mediartc.instance()
 
+	const showControls = mode !== "preview"
+
+	React.useEffect(() => {
+		if (onStreamAction?.getVolume) {
+			setLocalVolume(onStreamAction.getVolume(stream.userId) ?? 100)
+		}
+	}, [stream.userId, onStreamAction])
+
+	const checkMedia = React.useCallback(() => {
+		if (stream.isSelf && stream.stream) {
+			setMediaStream(stream.stream)
+			return
+		}
+		const screen = rtc.screens.get(stream.userId)
+		if (screen?.media) {
+			setMediaStream(screen.media)
+			setHasError(false)
+		} else {
+			setMediaStream(null)
+		}
+	}, [stream, rtc])
+
+	React.useEffect(() => checkMedia(), [checkMedia])
+
 	React.useEffect(() => {
 		const videoElement = videoRef.current
+		if (!videoElement) return
 
-		if (!videoElement) {
-			return
-		}
-
-		if (stream.isSelf && stream.stream) {
-			videoElement.srcObject = stream.stream
-			videoElement.muted = true
+		if (mediaStream) {
+			videoElement.srcObject = mediaStream
 			videoElement.play().catch(() => {})
-			return
+		} else {
+			videoElement.srcObject = null
 		}
-
-		const screen = rtc.screens.get(stream.userId)
-
-		if (screen?.media) {
-			videoElement.srcObject = screen.media
-			videoElement.play().catch(() => {})
-			setIsLoading(false)
-			setHasError(false)
-		}
-
 		return () => {
-			if (videoElement) {
-				videoElement.srcObject = null
-			}
+			if (videoElement) videoElement.srcObject = null
 		}
-	}, [isLoading, stream.id])
+	}, [mediaStream])
 
-	const hasVideo = React.useCallback(() => {
-		if (stream.isSelf) {
-			return Boolean(stream.stream)
+	React.useEffect(() => {
+		if (videoRef.current) {
+			videoRef.current.muted = stream.isSelf
+			videoRef.current.volume = volume / 100
 		}
+	}, [volume, stream.isSelf])
 
-		const screen = rtc.screens.get(stream.userId)
-
-		return Boolean(screen?.media)
-	}, [stream, rtc])
+	const onVolumeChange = React.useCallback(
+		(value) => {
+			setLocalVolume(value)
+			if (onStreamAction?.setVolume)
+				onStreamAction.setVolume(stream.userId, value)
+		},
+		[stream.userId, onStreamAction],
+	)
 
 	const handleStart = React.useCallback(
 		async (e) => {
 			e.stopPropagation()
-
-			if (stream.isSelf) {
-				return
-			}
-
+			if (stream.isSelf) return
 			setIsLoading(true)
 			setHasError(false)
-
 			try {
 				await rtc.screens.start(stream.producer.id)
+				checkMedia()
 			} catch (error) {
-				console.warn("failed to start stream:", error)
 				setHasError(true)
+			} finally {
+				setIsLoading(false)
 			}
-
-			setIsLoading(false)
 		},
-		[stream.id, stream.isSelf, stream.producer?.id, rtc],
+		[stream, rtc, checkMedia],
 	)
 
 	const handleStop = React.useCallback(
 		async (e) => {
 			e.stopPropagation()
-
-			if (stream.isSelf) {
-				return
-			}
-
+			if (stream.isSelf) return
 			try {
-				videoRef.current.srcObject = null
-
 				const screen = rtc.screens.get(stream.userId)
-				console.log("Stoping stream", stream, screen)
-
-				if (screen) {
-					await screen.stop()
-				}
+				if (screen) await screen.stop()
+				checkMedia()
 			} catch (error) {
 				console.warn("failed to stop stream:", error)
 			}
-
-			const videoElement = videoRef.current
-
-			if (videoElement) {
-				videoElement.srcObject = null
-			}
 		},
-		[stream.id, stream.isSelf, stream.userId, rtc],
+		[stream, rtc, checkMedia],
 	)
 
 	const handleFullscreenClick = React.useCallback((e) => {
 		e.stopPropagation()
-		const videoElement = videoRef.current
-		if (videoElement?.requestFullscreen) {
-			videoElement.requestFullscreen()
-		}
+		if (videoRef.current?.requestFullscreen)
+			videoRef.current.requestFullscreen()
 	}, [])
 
-	const handleTileClick = React.useCallback(() => {
-		onTileClick(stream.id)
-	}, [stream.id, onTileClick])
+	const handleTileClick = React.useCallback(
+		(e) => {
+			if (!e.target.classList.contains("video-stream-tile__overlay"))
+				return
+			if (mode === "single") return
+			onTileClick(stream.id)
+		},
+		[stream.id, onTileClick, mode],
+	)
+
+	const hasVideo = !!mediaStream
 
 	return (
 		<motion.div
-			key={stream.id}
 			layout
+			onClick={handleTileClick}
 			className={classnames("video-stream-tile", {
-				"video-stream-tile--focused": isFocused,
-				"video-stream-tile--preview": hasFocusedStream && !isFocused,
+				[`video-stream-tile--${mode}`]: mode !== "grid",
 				"video-stream-tile--active": hasVideo,
 				"video-stream-tile--error": hasError,
 				"video-stream-tile--loading": isLoading,
 			})}
-			onClick={handleTileClick}
 			initial={{ opacity: 0, scale: 0.9 }}
 			animate={{ opacity: 1, scale: 1 }}
 			exit={{ opacity: 0, scale: 0.9 }}
-			transition={{ duration: 0.3, type: "spring" }}
+			transition={{ type: "spring", bounce: 0, duration: 0.35 }}
 		>
 			<div className="video-stream-tile__overlay">
 				<div className="video-stream-tile__user">
 					<UserPreview
-						user={userData}
-						small
+						user={userData ?? {}}
 						onClick={() => {}}
+						small
 					/>
 				</div>
 
 				{hasError && (
 					<div className="video-stream-tile__error">
 						<span>failed to start stream</span>
-						<Button
-							onClick={(e) => {
-								e.stopPropagation()
-								setHasError(false)
-							}}
-						>
-							dismiss
-						</Button>
+						{showControls && (
+							<Button
+								onClick={(e) => {
+									e.stopPropagation()
+									setHasError(false)
+								}}
+							>
+								dismiss
+							</Button>
+						)}
 					</div>
 				)}
 
-				{!hasVideo() && !stream.isSelf && !hasError && !isLoading && (
-					<div className="video-stream-tile__start">
-						<Button
-							onClick={handleStart}
-							disabled={isLoading}
-						>
-							start
-						</Button>
-					</div>
-				)}
+				{!hasVideo &&
+					!stream.isSelf &&
+					!hasError &&
+					!isLoading &&
+					showControls && (
+						<div className="video-stream-tile__start">
+							<Button
+								onClick={handleStart}
+								disabled={isLoading}
+							>
+								start
+							</Button>
+						</div>
+					)}
 
 				{isLoading && (
 					<div className="video-stream-tile__loading">
@@ -188,8 +195,16 @@ const StreamTile = ({
 					</div>
 				)}
 
-				{hasVideo() && !hasError && (
+				{hasVideo && !hasError && showControls && (
 					<div className="video-stream-tile__controls">
+						<div className="video-stream-tile__controls__volume bg-accent">
+							<Icons.Volume2 />
+							<Slider
+								value={volume}
+								onChange={onVolumeChange}
+								onChangeComplete={onVolumeChange}
+							/>
+						</div>
 						<Button
 							icon={<Icons.Fullscreen />}
 							onClick={handleFullscreenClick}
@@ -203,7 +218,6 @@ const StreamTile = ({
 
 			<video
 				ref={videoRef}
-				muted={stream.isSelf}
 				playsInline
 			/>
 		</motion.div>
@@ -212,26 +226,22 @@ const StreamTile = ({
 
 const VoiceChannel = () => {
 	const state = useMediaRTCState()
-	const [focusedStreamId, setFocusedStreamId] = React.useState(null)
+	const [selectedStreamId, setSelectedStreamId] = React.useState(null)
 	const [userData, setUserData] = React.useState({})
+	const { getVolume, setVolume } = useStreamVolumePersistence()
+	const fetchedUsersRef = React.useRef(new Set())
 
 	const rtc = app.cores.mediartc.instance()
 
 	const streams = React.useMemo(() => {
-		const result = []
-
-		const remoteProducers = state.remoteProducers.filter(
-			(producer) => producer.kind === "video",
-		)
-
-		remoteProducers.forEach((producer) => {
-			result.push({
-				id: producer.id,
-				userId: producer.userId,
+		const result = state.remoteProducers
+			.filter((p) => p.kind === "video")
+			.map((p) => ({
+				id: p.id,
+				userId: p.userId,
 				isSelf: false,
-				producer,
-			})
-		})
+				producer: p,
+			}))
 
 		if (state.isProducingScreen && rtc.self.screenStream) {
 			result.push({
@@ -241,50 +251,56 @@ const VoiceChannel = () => {
 				stream: rtc.self.screenStream,
 			})
 		}
-
 		return result
 	}, [state.remoteProducers, state.isProducingScreen, rtc])
 
 	React.useEffect(() => {
-		const usersIds = streams.map((stream) => stream.userId)
+		const missingUserIds = streams
+			.map((s) => s.userId)
+			.filter((id) => !userData[id] && !fetchedUsersRef.current.has(id))
 
-		UsersModel.data({ user_id: usersIds }).then((data) => {
-			if (!Array.isArray(data)) {
-				data = [data]
-			}
+		if (missingUserIds.length > 0) {
+			missingUserIds.forEach((id) => fetchedUsersRef.current.add(id))
+			UsersModel.data({ user_id: missingUserIds }).then((data) => {
+				const usersArray = Array.isArray(data) ? data : [data]
+				setUserData((prev) => {
+					const next = { ...prev }
+					usersArray.forEach((u) => {
+						if (u) next[u._id] = u
+					})
+					return next
+				})
+			})
+		}
+	}, [streams, userData])
 
-			data = data.reduce((acc, user) => {
-				acc[user._id] = user
-				return acc
-			}, {})
-
-			setUserData(data)
-		})
-	}, [streams])
+	React.useEffect(() => {
+		if (
+			selectedStreamId &&
+			!streams.find((s) => s.id === selectedStreamId)
+		) {
+			setSelectedStreamId(null)
+		}
+	}, [streams, selectedStreamId])
 
 	const handleTileClick = React.useCallback((streamId) => {
-		setFocusedStreamId((current) =>
+		setSelectedStreamId((current) =>
 			current === streamId ? null : streamId,
 		)
 	}, [])
 
+	const streamActions = React.useMemo(
+		() => ({ getVolume, setVolume }),
+		[getVolume, setVolume],
+	)
+
 	React.useEffect(() => {
 		if (!state.channel) return
-
 		rtc.ui.detachFloatingScreens()
-
 		return () => {
-			if (state.channel) {
-				rtc.ui.attachFloatingScreens()
-			}
+			if (state.channel) rtc.ui.attachFloatingScreens()
 		}
 	}, [state.channel, rtc])
-
-	React.useEffect(() => {
-		if (streams.length === 0 && focusedStreamId) {
-			setFocusedStreamId(null)
-		}
-	}, [streams.length, focusedStreamId])
 
 	if (!state.channel) {
 		return (
@@ -293,7 +309,6 @@ const VoiceChannel = () => {
 			</div>
 		)
 	}
-
 	if (streams.length === 0) {
 		return (
 			<div className="channel-video-page channel-video-page--empty">
@@ -308,101 +323,54 @@ const VoiceChannel = () => {
 		if (count <= 4) return { cols: 2, rows: 2 }
 		if (count <= 6) return { cols: 3, rows: 2 }
 		if (count <= 9) return { cols: 3, rows: 3 }
-		if (count <= 12) return { cols: 4, rows: 3 }
 		if (count <= 16) return { cols: 4, rows: 4 }
 		return { cols: 4, rows: Math.ceil(count / 4) }
 	}
 
+	const isSingleStream = streams.length === 1
+	const hasSidebar = !isSingleStream && selectedStreamId !== null
+
 	const { cols, rows } = getGridLayout(streams.length)
-	const hasFocusedStream = focusedStreamId !== null
-
-	const focusedStream = hasFocusedStream
-		? streams.find((s) => s.id === focusedStreamId)
-		: null
-
-	const otherStreams = hasFocusedStream
-		? streams.filter((s) => s.id !== focusedStreamId)
-		: streams
 
 	return (
-		<motion.div
-			className={classnames("channel-video-page", {
-				focused: hasFocusedStream,
-			})}
-		>
+		<motion.div className="channel-video-page">
 			<div className="channel-video-page__content">
 				<div
 					className={classnames("video-grid", {
-						"video-grid--focused": hasFocusedStream,
+						"video-grid--with-sidebar": hasSidebar,
+						"video-grid--single": isSingleStream,
 					})}
-					style={{
-						"--grid-cols": cols,
-						"--grid-rows": rows,
-					}}
+					style={{ "--grid-cols": cols, "--grid-rows": rows }}
 				>
-					{hasFocusedStream ? (
-						<div className="video-grid__focused-layout">
-							<div className="video-grid__focused-container">
-								{focusedStream && (
-									<StreamTile
-										key={focusedStream.id}
-										stream={focusedStream}
-										isFocused={true}
-										hasFocusedStream={hasFocusedStream}
-										onTileClick={handleTileClick}
-										userData={
-											userData[focusedStream.userId]
-										}
-									/>
-								)}
-							</div>
+					{streams.map((stream) => {
+						let tileMode = "grid"
 
-							{otherStreams.length > 0 && (
-								<div className="video-grid__preview-bar">
-									<div className="video-grid__preview-content">
-										{otherStreams.map((stream) => (
-											<StreamTile
-												key={stream.id}
-												stream={stream}
-												isFocused={false}
-												hasFocusedStream={
-													hasFocusedStream
-												}
-												onTileClick={handleTileClick}
-												userData={
-													userData[stream.userId]
-												}
-											/>
-										))}
-									</div>
-								</div>
-							)}
-						</div>
-					) : (
-						<div className="video-grid__grid-container">
-							{streams.map((stream) => (
-								<StreamTile
-									key={stream.id}
-									stream={stream}
-									isFocused={false}
-									hasFocusedStream={hasFocusedStream}
-									onTileClick={handleTileClick}
-									userData={userData[stream.userId]}
-								/>
-							))}
-						</div>
-					)}
+						if (isSingleStream) {
+							tileMode = "single"
+						} else if (hasSidebar) {
+							tileMode =
+								stream.id === selectedStreamId
+									? "hero"
+									: "preview"
+						}
+
+						return (
+							<StreamTile
+								key={stream.id}
+								stream={stream}
+								mode={tileMode}
+								onTileClick={handleTileClick}
+								onStreamAction={streamActions}
+								userData={userData[stream.userId]}
+							/>
+						)
+					})}
 				</div>
 			</div>
 		</motion.div>
 	)
 }
 
-VoiceChannel.options = {
-	layout: {
-		centeredContent: false,
-		maxHeight: true,
-	},
-}
+VoiceChannel.options = { layout: { centeredContent: false, maxHeight: true } }
 
 export default VoiceChannel

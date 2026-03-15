@@ -74,6 +74,14 @@ const SpacesSidebarBottomItems = () => {
 		[],
 	)
 
+	const AccountButton = React.useMemo(() => {
+		if (!otherItems) {
+			return null
+		}
+
+		return otherItems.find((item) => item.key === "account")
+	}, [otherItems])
+
 	const onClickSearch = React.useCallback(() => {
 		app.location.push("/spaces/search")
 	}, [])
@@ -138,19 +146,9 @@ const SpacesSidebarBottomItems = () => {
 				</div>
 			</div>
 
-			{otherItems.map((item) => {
-				return (
-					<div
-						key={item.key}
-						className={classNames(
-							"group-list__item-other",
-							"bg-accent",
-						)}
-					>
-						{item.icon ?? item.label}
-					</div>
-				)
-			})}
+			<div className={classNames("group-list__item-other", "bg-accent")}>
+				{AccountButton && React.cloneElement(AccountButton.label, {})}
+			</div>
 		</div>
 	)
 }
